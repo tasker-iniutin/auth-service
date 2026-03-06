@@ -1,20 +1,22 @@
 package redis
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
-	d "todo/auth-service/internal/domain"
+
+	d "github.com/tasker-iniutin/auth-service/internal/domain"
 
 	"github.com/redis/go-redis/v9"
 )
 
 type redisRepoImpl struct {
 	rdb       *redis.Client
-	keyPrefix string // "rt" or "sess"
+	keyPrefix string
 }
 
 func NewRedisRepo(rdp *redis.Client) *redisRepoImpl {
@@ -27,17 +29,20 @@ func NewRedisRepo(rdp *redis.Client) *redisRepoImpl {
 func (r *redisRepoImpl) fmtKey(id d.SessionID) string {
 	return fmt.Sprintf("%s:%d", r.keyPrefix, id)
 }
+
 func (r *redisRepoImpl) hashKey(tokenHash []byte) string {
 	return fmt.Sprintf("%s_h:%s", r.keyPrefix, hex.EncodeToString(tokenHash))
 }
+
 func (r *redisRepoImpl) userIndexKey(id d.UserID) string {
-	return fmt.Sprintf("%s_u:%d", r.keyPrefix, id) // set с sessionID
+	return fmt.Sprintf("%s_u:%d", r.keyPrefix, id)
 }
 
 func (r *redisRepoImpl) CreateRefresh(ctx context.Context, s d.RefreshSession) error {
-	if s.ID == 0 || s.UserID == 0 || s.TokenHash == nil {
+	if s.ID == 0 || s.UserID == 0 || len(s.TokenHash) == 0 {
 		return errors.New("empty required fields")
 	}
+
 	ttl := time.Until(s.ExpiresAt)
 	if ttl <= 0 {
 		_ = r.RevokeRefresh(ctx, s.TokenHash)
@@ -50,25 +55,26 @@ func (r *redisRepoImpl) CreateRefresh(ctx context.Context, s d.RefreshSession) e
 	}
 
 	pipe := r.rdb.Pipeline()
+	pipe.Set(ctx, r.hashKey(s.TokenHash), int64(s.ID), ttl)
 	pipe.Set(ctx, r.fmtKey(s.ID), b, ttl)
-	pipe.SAdd(ctx, r.userIndexKey(s.UserID), s.ID)
-	pipe.Expire(ctx, r.userIndexKey(s.UserID), ttl)
+	pipe.SAdd(ctx, r.userIndexKey(s.UserID), int64(s.ID))
 	_, err = pipe.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("redis upsert: %w", err)
 	}
+
 	return nil
 }
+
 func (r *redisRepoImpl) GetRefresh(ctx context.Context, tokenHash []byte) (d.RefreshSession, error) {
 	if len(tokenHash) == 0 {
 		return d.RefreshSession{}, errors.New("empty tokenHash")
 	}
 
-	// 1) tokenHash -> sessionID
 	sid, err := r.rdb.Get(ctx, r.hashKey(tokenHash)).Int64()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			return d.RefreshSession{}, d.ErrNotFound // или как у тебя принято
+			return d.RefreshSession{}, d.ErrNotFound
 		}
 		return d.RefreshSession{}, fmt.Errorf("redis get session id by hash: %w", err)
 	}
@@ -87,12 +93,13 @@ func (r *redisRepoImpl) GetRefresh(ctx context.Context, tokenHash []byte) (d.Ref
 		return d.RefreshSession{}, fmt.Errorf("unmarshal session: %w", err)
 	}
 
-	if len(s.TokenHash) == 0 || hex.EncodeToString(s.TokenHash) != hex.EncodeToString(tokenHash) {
+	if len(s.TokenHash) == 0 || !bytes.Equal(s.TokenHash, tokenHash) {
 		return d.RefreshSession{}, d.ErrNotFound
 	}
 
 	return s, nil
 }
+
 func (r *redisRepoImpl) RevokeRefresh(ctx context.Context, tokenHash []byte) error {
 	if len(tokenHash) == 0 {
 		return errors.New("empty tokenHash")
@@ -115,11 +122,13 @@ func (r *redisRepoImpl) RevokeRefresh(ctx context.Context, tokenHash []byte) err
 	pipe.Del(ctx, r.hashKey(tokenHash))
 	pipe.Del(ctx, r.fmtKey(d.SessionID(sid)))
 	if s.UserID != 0 {
-		pipe.SRem(ctx, r.userIndexKey(s.UserID), sid)
+		pipe.SRem(ctx, r.userIndexKey(s.UserID), int64(sid))
 	}
+
 	_, err = pipe.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("redis revoke: %w", err)
 	}
+
 	return nil
 }

@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
-	d "todo/auth-service/internal/domain"
-	uc "todo/auth-service/internal/usecase"
+	d "github.com/tasker-iniutin/auth-service/internal/domain"
+	uc "github.com/tasker-iniutin/auth-service/internal/usecase"
 
-	pb "github.com/you/todo/api-contracts/gen/go/proto/auth/v1alpha"
+	pb "github.com/tasker-iniutin/api-contracts/gen/go/proto/auth/v1alpha"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -34,7 +35,7 @@ func NewServer(reg *uc.RegisterUser, login *uc.LoginUser, ref *uc.RefreshUser, l
 
 func toPBUser(u d.User) *pb.User {
 	return &pb.User{
-		Id:    uint64(u.ID),
+		Id:    strconv.Itoa(int(u.ID)),
 		Email: u.Email,
 		Login: u.Login,
 	}
@@ -115,7 +116,7 @@ func (s *Server) Logout(ctx context.Context, req *pb.LogoutRequest) (*emptypb.Em
 
 func mapErr(err error) error {
 	print := func(c codes.Code, e error) error {
-		return status.Error(c, fmt.Errorf("authorization failed: &w", err).Error())
+		return status.Error(c, fmt.Sprintf("authorization failed: %v", err))
 	}
 	switch {
 	case errors.Is(err, d.ErrNotFound):

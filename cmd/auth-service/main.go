@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"todo/auth-service/internal/app"
+	"github.com/tasker-iniutin/auth-service/internal/app"
 )
 
 func main() {

@@ -12,15 +12,13 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"github.com/redis/go-redis/v9"
+	authpb "github.com/tasker-iniutin/api-contracts/gen/go/proto/auth/v1alpha"
+	sec "github.com/tasker-iniutin/common/authsecurity"
 
-	authpb "github.com/you/todo/api-contracts/gen/go/proto/auth/v1alpha"
-
-	"todo/auth-service/internal/store/mem"
-	redrepo "todo/auth-service/internal/store/redis"
-	grpc "todo/auth-service/internal/transport/grpc"
-	"todo/auth-service/internal/usecase"
-
-	sec "github.com/you/todo/common/authsecurity"
+	mem "github.com/tasker-iniutin/auth-service/internal/store/mem"
+	redrepo "github.com/tasker-iniutin/auth-service/internal/store/redis"
+	grpc "github.com/tasker-iniutin/auth-service/internal/transport/grpc"
+	"github.com/tasker-iniutin/auth-service/internal/usecase"
 )
 
 type App struct {
@@ -48,7 +46,7 @@ func (a *App) Run() error {
 	sessionRepo := redrepo.NewRedisRepo(rdb)
 
 	// ----- security: keys/tokens -----
-	privateKey, err := rsa.GenerateKey(rand.Reader, 1024)
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return err
 	}
@@ -64,7 +62,7 @@ func (a *App) Run() error {
 	// ----- usecases -----
 	regUser := usecase.NewRegisterUser(sessionRepo, userRepo, issuer)
 	logUser := usecase.NewLoginUser(sessionRepo, userRepo, issuer)
-	refreshUC := usecase.NewRefreshUser(userRepo, sessionRepo, issuer, verifier)
+	refreshUC := usecase.NewRefreshUser(sessionRepo, issuer)
 	logoutUC := usecase.NewLogoutUser(sessionRepo, verifier)
 
 	// ----- handler -----

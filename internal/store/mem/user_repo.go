@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	d "todo/auth-service/internal/domain"
+	d "github.com/tasker-iniutin/auth-service/internal/domain"
 )
 
 type userRepoImpl struct {
@@ -109,4 +109,19 @@ func (r *userRepoImpl) GetByLogin(ctx context.Context, login string) (d.User, er
 		return d.User{}, d.ErrNotFound
 	}
 	return u, nil
+}
+
+func (r *userRepoImpl) GetCredentials(ctx context.Context, id d.UserID) (d.Credentials, error) {
+	if err := ctx.Err(); err != nil {
+		return d.Credentials{}, err
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	cred, ok := r.credById[id]
+	if !ok {
+		return d.Credentials{}, d.ErrNotFound
+	}
+	return cred, nil
 }

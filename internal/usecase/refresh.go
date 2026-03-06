@@ -2,22 +2,84 @@ package usecase
 
 import (
 	"context"
-	d "todo/auth-service/internal/domain"
-	"todo/auth-service/internal/security"
+	"crypto/sha256"
+	"time"
+
+	d "github.com/tasker-iniutin/auth-service/internal/domain"
+	sec "github.com/tasker-iniutin/common/authsecurity"
 )
 
 type RefreshUser struct {
 	s d.SessionRepo
-	u d.UserRepo
+	i sec.Issuer
 }
 
-func NewRefreshUser(u d.UserRepo, s d.SessionRepo, i security.Issuer, v security.Verifier) *RefreshUser {
+func NewRefreshUser(s d.SessionRepo, i sec.Issuer) *RefreshUser {
 	return &RefreshUser{
 		s: s,
-		u: u,
+		i: i,
 	}
 }
 
 func (c *RefreshUser) Exec(ctx context.Context, refreshToken string) (d.TokenPair, error) {
+	if err := ctx.Err(); err != nil {
+		return d.TokenPair{}, err
+	}
+	if refreshToken == "" {
+		return d.TokenPair{}, d.ErrValidation
+	}
 
+	// 1) hash incoming refresh token
+	oldHash := sha256.Sum256([]byte(refreshToken))
+
+	// 2) load existing session
+	sess, err := c.s.GetRefresh(ctx, oldHash[:])
+	if err != nil {
+		return d.TokenPair{}, err
+	}
+
+	// 3) check expiry
+	now := time.Now()
+	if !sess.ExpiresAt.After(now) {
+		_ = c.s.RevokeRefresh(ctx, oldHash[:])
+		return d.TokenPair{}, d.ErrSessionExpired
+	}
+
+	// 4) issue new access token
+	accessToken, accessExp, err := c.i.NewAccess(uint64(sess.UserID))
+	if err != nil {
+		return d.TokenPair{}, err
+	}
+
+	// 5) issue new refresh token
+	newRefreshToken, newRefreshHash, err := c.i.NewRefresh()
+	if err != nil {
+		return d.TokenPair{}, err
+	}
+
+	pair := d.TokenPair{
+		AccessToken:   accessToken,
+		RefreshToken:  newRefreshToken,
+		AccessExpires: accessExp,
+	}
+
+	// 6) store new refresh session
+	newSess := d.RefreshSession{
+		ID:        d.SessionID(uint64(now.UnixNano())),
+		UserID:    sess.UserID,
+		TokenHash: append([]byte(nil), newRefreshHash...),
+		CreatedAt: now,
+		ExpiresAt: now.Add(14 * 24 * time.Hour),
+	}
+
+	if err := c.s.CreateRefresh(ctx, newSess); err != nil {
+		return d.TokenPair{}, err
+	}
+
+	// 7) revoke old refresh session
+	if err := c.s.RevokeRefresh(ctx, oldHash[:]); err != nil {
+		return d.TokenPair{}, err
+	}
+
+	return pair, nil
 }
