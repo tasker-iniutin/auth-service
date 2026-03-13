@@ -1,8 +1,11 @@
 package app
 
 import (
-	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -30,25 +33,22 @@ func CreateApp(grpcAddr string) *App {
 }
 
 func (a *App) Run() error {
-	// ----- infra: repos -----
 	userRepo := mem.NewUserRepo()
 
 	redisAddr := getenv("REDIS_ADDR", "127.0.0.1:6379")
 	redisPass := os.Getenv("REDIS_PASSWORD")
-	redisDB := 0
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     redisAddr,
 		Password: redisPass,
-		DB:       redisDB,
+		DB:       0,
 	})
 
 	sessionRepo := redrepo.NewRedisRepo(rdb)
 
-	// ----- security: keys/tokens -----
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	privateKey, err := loadRSAPrivateKey("./keys/private.pem")
 	if err != nil {
-		return err
+		return fmt.Errorf("load private key: %w", err)
 	}
 
 	issuerName := "todo-auth"
@@ -57,21 +57,18 @@ func (a *App) Run() error {
 	keyID := "k1"
 
 	issuer := sec.NewRS256Issuer(privateKey, issuerName, audience, accessTTL, keyID)
-	verifier := sec.NewRS256Verifier(&privateKey.PublicKey, issuerName, audience) // если есть
+	verifier := sec.NewRS256Verifier(&privateKey.PublicKey, issuerName, audience)
 
-	// ----- usecases -----
 	regUser := usecase.NewRegisterUser(sessionRepo, userRepo, issuer)
 	logUser := usecase.NewLoginUser(sessionRepo, userRepo, issuer)
 	refreshUC := usecase.NewRefreshUser(sessionRepo, issuer)
 	logoutUC := usecase.NewLogoutUser(sessionRepo, verifier)
 
-	// ----- handler -----
 	srv := grpc.NewServer(regUser, logUser, refreshUC, logoutUC)
 
-	// ----- gRPC server -----
 	grpcServer := g.NewServer()
 	authpb.RegisterAuthServiceServer(grpcServer, srv)
-	reflection.Register(grpcServer) // dev-only
+	reflection.Register(grpcServer)
 
 	lis, err := net.Listen("tcp", a.grpcAddr)
 	if err != nil {
@@ -79,11 +76,37 @@ func (a *App) Run() error {
 	}
 
 	log.Printf("auth-service gRPC listening on %s", a.grpcAddr)
-	if err := grpcServer.Serve(lis); err != nil {
-		log.Printf("gRPC server stopped: %v", err)
-		return err
+	return grpcServer.Serve(lis)
+}
+
+func loadRSAPrivateKey(path string) (*rsa.PrivateKey, error) {
+	keyBytes, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+
+	block, _ := pem.Decode(keyBytes)
+	if block == nil {
+		return nil, errors.New("invalid PEM: no block found")
+	}
+
+	// PKCS#1: -----BEGIN RSA PRIVATE KEY-----
+	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+		return key, nil
+	}
+
+	// PKCS#8: -----BEGIN PRIVATE KEY-----
+	keyAny, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse private key: %w", err)
+	}
+
+	key, ok := keyAny.(*rsa.PrivateKey)
+	if !ok {
+		return nil, errors.New("PEM does not contain RSA private key")
+	}
+
+	return key, nil
 }
 
 func getenv(k, def string) string {
