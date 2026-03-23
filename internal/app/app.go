@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -14,26 +15,63 @@ import (
 	g "google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	authpb "github.com/tasker-iniutin/api-contracts/gen/go/proto/auth/v1alpha"
 	sec "github.com/tasker-iniutin/common/authsecurity"
 
-	mem "github.com/tasker-iniutin/auth-service/internal/store/mem"
+	"github.com/tasker-iniutin/auth-service/internal/store/postgre"
 	redrepo "github.com/tasker-iniutin/auth-service/internal/store/redis"
 	grpc "github.com/tasker-iniutin/auth-service/internal/transport/grpc"
 	"github.com/tasker-iniutin/auth-service/internal/usecase"
 )
 
 type App struct {
-	grpcAddr string
+	grpcAddr         string
+	privateKeyPath   string
+	jwtIssuer        string
+	jwtAudience      string
+	jwtAccessTTL     time.Duration
+	jwtKeyID         string
+	enableReflection bool
+	databaseAddr     string
 }
 
-func CreateApp(grpcAddr string) *App {
-	return &App{grpcAddr: grpcAddr}
+func CreateApp(
+	grpcAddr string,
+	privateKeyPath string,
+	jwtIssuer string,
+	jwtAudience string,
+	jwtAccessTTL time.Duration,
+	jwtKeyID string,
+	enableReflection bool,
+	databaseAddr string,
+) *App {
+	return &App{
+		grpcAddr:         grpcAddr,
+		privateKeyPath:   privateKeyPath,
+		jwtIssuer:        jwtIssuer,
+		jwtAudience:      jwtAudience,
+		jwtAccessTTL:     jwtAccessTTL,
+		jwtKeyID:         jwtKeyID,
+		enableReflection: enableReflection,
+		databaseAddr:     databaseAddr,
+	}
 }
 
 func (a *App) Run() error {
-	userRepo := mem.NewUserRepo()
+	// userRepo := mem.NewUserRepo() in mem
+	db, err := pgxpool.New(context.Background(), a.databaseAddr)
+	if err != nil {
+		return fmt.Errorf("create db pool: %w", err)
+	}
+	if err := db.Ping(context.Background()); err != nil {
+		db.Close()
+		return fmt.Errorf("ping  db: %w", err)
+	}
+	defer db.Close()
+
+	userRepo := postgre.NewPostgreRepo(db)
 
 	redisAddr := getenv("REDIS_ADDR", "127.0.0.1:6379")
 	redisPass := os.Getenv("REDIS_PASSWORD")
@@ -46,18 +84,13 @@ func (a *App) Run() error {
 
 	sessionRepo := redrepo.NewRedisRepo(rdb)
 
-	privateKey, err := loadRSAPrivateKey("./keys/private.pem")
+	privateKey, err := loadRSAPrivateKey(a.privateKeyPath)
 	if err != nil {
 		return fmt.Errorf("load private key: %w", err)
 	}
 
-	issuerName := "todo-auth"
-	audience := "todo-api"
-	accessTTL := 15 * time.Minute
-	keyID := "k1"
-
-	issuer := sec.NewRS256Issuer(privateKey, issuerName, audience, accessTTL, keyID)
-	verifier := sec.NewRS256Verifier(&privateKey.PublicKey, issuerName, audience)
+	issuer := sec.NewRS256Issuer(privateKey, a.jwtIssuer, a.jwtAudience, a.jwtAccessTTL, a.jwtKeyID)
+	verifier := sec.NewRS256Verifier(&privateKey.PublicKey, a.jwtIssuer, a.jwtAudience)
 
 	regUser := usecase.NewRegisterUser(sessionRepo, userRepo, issuer)
 	logUser := usecase.NewLoginUser(sessionRepo, userRepo, issuer)
@@ -68,7 +101,9 @@ func (a *App) Run() error {
 
 	grpcServer := g.NewServer()
 	authpb.RegisterAuthServiceServer(grpcServer, srv)
-	reflection.Register(grpcServer)
+	if a.enableReflection {
+		reflection.Register(grpcServer)
+	}
 
 	lis, err := net.Listen("tcp", a.grpcAddr)
 	if err != nil {
@@ -76,6 +111,14 @@ func (a *App) Run() error {
 	}
 
 	log.Printf("auth-service gRPC listening on %s", a.grpcAddr)
+	log.Printf(
+		"auth-service jwt config: private_key=%s issuer=%s audience=%s key_id=%s access_ttl=%s",
+		a.privateKeyPath,
+		a.jwtIssuer,
+		a.jwtAudience,
+		a.jwtKeyID,
+		a.jwtAccessTTL,
+	)
 	return grpcServer.Serve(lis)
 }
 
