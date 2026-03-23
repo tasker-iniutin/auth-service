@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	d "github.com/tasker-iniutin/auth-service/internal/domain"
+	commonpg "github.com/tasker-iniutin/common/postgres"
 )
 
 type userRepoImpl struct {
@@ -30,40 +31,37 @@ func (r *userRepoImpl) Create(ctx context.Context, u d.UserCreateRequest, passwo
 		VALUES ($1, $2, $3)
 	`
 
-	tx, err := r.db.Begin(ctx)
-	if err != nil {
-		return d.User{}, fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
 	var nU d.User
-	err = tx.QueryRow(
-		ctx,
-		q1,
-		u.Email,
-		u.Login,
-	).Scan(
-		&nU.ID,
-		&nU.Email,
-		&nU.Login,
-	)
-	if err != nil {
-		return d.User{}, mapPGError(err)
-	}
+	err := commonpg.WithTx(ctx, r.db, func(tx pgx.Tx) error {
+		err := tx.QueryRow(
+			ctx,
+			q1,
+			u.Email,
+			u.Login,
+		).Scan(
+			&nU.ID,
+			&nU.Email,
+			&nU.Login,
+		)
+		if err != nil {
+			return mapPGError(err)
+		}
 
-	_, err = tx.Exec(
-		ctx,
-		q2,
-		nU.ID,
-		password.Algo,
-		password.Hash,
-	)
-	if err != nil {
-		return d.User{}, mapPGError(err)
-	}
+		_, err = tx.Exec(
+			ctx,
+			q2,
+			nU.ID,
+			password.Algo,
+			password.Hash,
+		)
+		if err != nil {
+			return mapPGError(err)
+		}
 
-	if err := tx.Commit(ctx); err != nil {
-		return d.User{}, fmt.Errorf("commit tx: %w", err)
+		return nil
+	})
+	if err != nil {
+		return d.User{}, err
 	}
 
 	return nU, nil
