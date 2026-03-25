@@ -2,13 +2,13 @@ package usecase
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"testing"
 	"time"
 
 	d "github.com/tasker-iniutin/auth-service/internal/domain"
 	"github.com/tasker-iniutin/auth-service/internal/store/mem"
+	sec "github.com/tasker-iniutin/common/authsecurity"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -190,10 +190,9 @@ func TestLoginUserExecInvalidPassword(t *testing.T) {
 func TestRefreshUserExecSuccess(t *testing.T) {
 	sessionRepo := newFakeSessionRepo()
 	refreshToken := "old-refresh-token"
-	sum := sha256.Sum256([]byte(refreshToken))
-	oldHash := sum[:]
+	oldHash := sec.RefreshHash(refreshToken)
 	sessionRepo.sessionsByHash[string(oldHash)] = d.RefreshSession{
-		ID:        1,
+		ID:        d.SessionID("sess-1"),
 		UserID:    42,
 		TokenHash: append([]byte(nil), oldHash...),
 		CreatedAt: time.Now().Add(-time.Hour),
@@ -222,6 +221,41 @@ func TestRefreshUserExecSuccess(t *testing.T) {
 	}
 }
 
+func TestRefreshUserExecFailOpenOnRevokeError(t *testing.T) {
+	sessionRepo := newFakeSessionRepo()
+	refreshToken := "old-refresh-token"
+	oldHash := sec.RefreshHash(refreshToken)
+	sessionRepo.sessionsByHash[string(oldHash)] = d.RefreshSession{
+		ID:        d.SessionID("sess-1"),
+		UserID:    42,
+		TokenHash: append([]byte(nil), oldHash...),
+		CreatedAt: time.Now().Add(-time.Hour),
+		ExpiresAt: time.Now().Add(time.Hour),
+	}
+	sessionRepo.revokeErr = errors.New("revoke failed")
+
+	uc := NewRefreshUser(sessionRepo, fakeIssuer{
+		accessToken:  "access-token",
+		refreshToken: "new-refresh-token",
+		refreshHash:  []byte("new-refresh-hash"),
+		exp:          time.Now().Add(15 * time.Minute),
+	})
+
+	pair, err := uc.Exec(context.Background(), refreshToken)
+	if err != nil {
+		t.Fatalf("refresh user: %v", err)
+	}
+	if pair.RefreshToken != "new-refresh-token" {
+		t.Fatalf("unexpected refresh token: %q", pair.RefreshToken)
+	}
+	if len(sessionRepo.created) != 1 {
+		t.Fatalf("expected new session creation, got %d", len(sessionRepo.created))
+	}
+	if len(sessionRepo.revoked) != 0 {
+		t.Fatalf("expected no revoked sessions due to error, got %d", len(sessionRepo.revoked))
+	}
+}
+
 func TestLogoutUserExecValidation(t *testing.T) {
 	uc := NewLogoutUser(newFakeSessionRepo())
 
@@ -244,8 +278,8 @@ func TestLogoutUserExecRevokesByRefreshHash(t *testing.T) {
 		t.Fatalf("expected 1 revoked session, got %d", len(sessionRepo.revoked))
 	}
 
-	want := sha256.Sum256([]byte(refreshToken))
-	if string(sessionRepo.revoked[0]) != string(want[:]) {
+	want := sec.RefreshHash(refreshToken)
+	if string(sessionRepo.revoked[0]) != string(want) {
 		t.Fatal("expected refresh token hash to be revoked")
 	}
 }

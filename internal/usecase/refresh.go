@@ -2,11 +2,11 @@ package usecase
 
 import (
 	"context"
-	"crypto/sha256"
 	"time"
 
 	d "github.com/tasker-iniutin/auth-service/internal/domain"
 	sec "github.com/tasker-iniutin/common/authsecurity"
+	"github.com/google/uuid"
 )
 
 type RefreshUser struct {
@@ -30,10 +30,10 @@ func (c *RefreshUser) Exec(ctx context.Context, refreshToken string) (d.TokenPai
 	}
 
 	// 1) hash incoming refresh token
-	oldHash := sha256.Sum256([]byte(refreshToken))
+	oldHash := sec.RefreshHash(refreshToken)
 
 	// 2) load existing session
-	sess, err := c.s.GetRefresh(ctx, oldHash[:])
+	sess, err := c.s.GetRefresh(ctx, oldHash)
 	if err != nil {
 		return d.TokenPair{}, err
 	}
@@ -41,7 +41,7 @@ func (c *RefreshUser) Exec(ctx context.Context, refreshToken string) (d.TokenPai
 	// 3) check expiry
 	now := time.Now()
 	if !sess.ExpiresAt.After(now) {
-		_ = c.s.RevokeRefresh(ctx, oldHash[:])
+		_ = c.s.RevokeRefresh(ctx, oldHash)
 		return d.TokenPair{}, d.ErrSessionExpired
 	}
 
@@ -65,7 +65,7 @@ func (c *RefreshUser) Exec(ctx context.Context, refreshToken string) (d.TokenPai
 
 	// 6) store new refresh session
 	newSess := d.RefreshSession{
-		ID:        d.SessionID(uint64(now.UnixNano())),
+		ID:        d.SessionID(uuid.NewString()),
 		UserID:    sess.UserID,
 		TokenHash: append([]byte(nil), newRefreshHash...),
 		CreatedAt: now,
@@ -77,9 +77,7 @@ func (c *RefreshUser) Exec(ctx context.Context, refreshToken string) (d.TokenPai
 	}
 
 	// 7) revoke old refresh session
-	if err := c.s.RevokeRefresh(ctx, oldHash[:]); err != nil {
-		return d.TokenPair{}, err
-	}
+	_ = c.s.RevokeRefresh(ctx, oldHash)
 
 	return pair, nil
 }

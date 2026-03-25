@@ -33,6 +33,20 @@ services:
       timeout: 3s
       retries: 10
 
+  test:
+    image: golang:1.25
+    container_name: auth-service-test
+    profiles: ["test"]
+    working_dir: /app
+    environment:
+      GOCACHE: /tmp/go-build
+    volumes:
+      - .:/app
+    command: ["go", "test", "./..."]
+    depends_on:
+      - postgres
+      - redis
+
 volumes:
   postgres_data:
   redis_data:

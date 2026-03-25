@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
 	d "github.com/tasker-iniutin/auth-service/internal/domain"
@@ -80,7 +81,7 @@ func (c *LoginUser) Exec(ctx context.Context, l *d.UserLoginRequest) (d.User, d.
 
 	now := time.Now()
 	sess := d.RefreshSession{
-		ID:        d.SessionID(uint64(now.UnixNano())),
+		ID:        d.SessionID(uuid.NewString()),
 		UserID:    u.ID,
 		TokenHash: append([]byte(nil), refreshHash...),
 		CreatedAt: now,

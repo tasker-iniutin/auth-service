@@ -3,7 +3,7 @@ package domain
 import "time"
 
 type UserID uint64
-type SessionID uint64
+type SessionID string
 
 type UserCreateRequest struct {
 	Email string

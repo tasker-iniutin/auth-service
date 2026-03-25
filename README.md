@@ -266,6 +266,12 @@ Run:
 go test ./...
 ```
 
+Or via Docker (uses `GOCACHE=/tmp/go-build` inside the container):
+
+```bash
+docker compose --profile test up --abort-on-container-exit test
+```
+
 Repository tests use a real PostgreSQL instance and read:
 
 - `AUTH_TEST_DATABASE_URL`, or

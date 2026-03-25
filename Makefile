@@ -1,6 +1,8 @@
 COMPOSE ?= docker compose
 GOOSE ?= goose
 MIGRATIONS_DIR ?= ./migrations
+GO ?= go
+GOCACHE ?= /tmp/go-build
 
 POSTGRES_USER ?= postgres
 POSTGRES_PASSWORD ?= postgres
@@ -10,7 +12,7 @@ REDIS_PORT ?= 6379
 
 DATABASE_URL ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
 
-.PHONY: db-up db-down db-reset db-logs db-psql redis-cli migrate-up migrate-down migrate-status migrate-create
+.PHONY: db-up db-down db-reset db-logs db-psql redis-cli migrate-up migrate-down migrate-status migrate-create test
 
 db-up:
 	$(COMPOSE) up -d
@@ -44,3 +46,6 @@ ifndef NAME
 	$(error NAME is required, use: make migrate-create NAME=create_users)
 endif
 	$(GOOSE) -dir $(MIGRATIONS_DIR) create $(NAME) sql
+
+test:
+	GOCACHE=$(GOCACHE) $(GO) test ./...

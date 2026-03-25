@@ -35,7 +35,7 @@ func NewServer(reg *uc.RegisterUser, login *uc.LoginUser, ref *uc.RefreshUser, l
 
 func toPBUser(u d.User) *pb.User {
 	return &pb.User{
-		Id:    strconv.Itoa(int(u.ID)),
+		Id:    strconv.FormatUint(uint64(u.ID), 10),
 		Email: u.Email,
 		Login: u.Login,
 	}

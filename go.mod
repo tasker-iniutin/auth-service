@@ -2,12 +2,11 @@ module github.com/tasker-iniutin/auth-service
 
 go 1.25.0
 
-replace github.com/tasker-iniutin/common => ../common
-
 require (
+	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/tasker-iniutin/api-contracts v0.1.1-alpha
-	github.com/tasker-iniutin/common v0.1.1-alpha
+	github.com/tasker-iniutin/common v0.3.0
 	google.golang.org/grpc v1.79.1
 	google.golang.org/protobuf v1.36.11
 )

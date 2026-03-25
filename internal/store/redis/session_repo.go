@@ -27,19 +27,15 @@ func NewRedisRepo(rdp *redis.Client) *redisRepoImpl {
 }
 
 func (r *redisRepoImpl) fmtKey(id d.SessionID) string {
-	return fmt.Sprintf("%s:%d", r.keyPrefix, id)
+	return fmt.Sprintf("%s:%s", r.keyPrefix, id)
 }
 
 func (r *redisRepoImpl) hashKey(tokenHash []byte) string {
 	return fmt.Sprintf("%s_h:%s", r.keyPrefix, hex.EncodeToString(tokenHash))
 }
 
-func (r *redisRepoImpl) userIndexKey(id d.UserID) string {
-	return fmt.Sprintf("%s_u:%d", r.keyPrefix, id)
-}
-
 func (r *redisRepoImpl) CreateRefresh(ctx context.Context, s d.RefreshSession) error {
-	if s.ID == 0 || s.UserID == 0 || len(s.TokenHash) == 0 {
+	if s.ID == "" || s.UserID == 0 || len(s.TokenHash) == 0 {
 		return errors.New("empty required fields")
 	}
 
@@ -55,9 +51,8 @@ func (r *redisRepoImpl) CreateRefresh(ctx context.Context, s d.RefreshSession) e
 	}
 
 	pipe := r.rdb.Pipeline()
-	pipe.Set(ctx, r.hashKey(s.TokenHash), int64(s.ID), ttl)
+	pipe.Set(ctx, r.hashKey(s.TokenHash), string(s.ID), ttl)
 	pipe.Set(ctx, r.fmtKey(s.ID), b, ttl)
-	pipe.SAdd(ctx, r.userIndexKey(s.UserID), int64(s.ID))
 	_, err = pipe.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("redis upsert: %w", err)
@@ -71,7 +66,7 @@ func (r *redisRepoImpl) GetRefresh(ctx context.Context, tokenHash []byte) (d.Ref
 		return d.RefreshSession{}, errors.New("empty tokenHash")
 	}
 
-	sid, err := r.rdb.Get(ctx, r.hashKey(tokenHash)).Int64()
+	sid, err := r.rdb.Get(ctx, r.hashKey(tokenHash)).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return d.RefreshSession{}, d.ErrNotFound
@@ -105,7 +100,7 @@ func (r *redisRepoImpl) RevokeRefresh(ctx context.Context, tokenHash []byte) err
 		return errors.New("empty tokenHash")
 	}
 
-	sid, err := r.rdb.Get(ctx, r.hashKey(tokenHash)).Int64()
+	sid, err := r.rdb.Get(ctx, r.hashKey(tokenHash)).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return nil
@@ -113,17 +108,9 @@ func (r *redisRepoImpl) RevokeRefresh(ctx context.Context, tokenHash []byte) err
 		return fmt.Errorf("redis get session id by hash: %w", err)
 	}
 
-	var s d.RefreshSession
-	if raw, err := r.rdb.Get(ctx, r.fmtKey(d.SessionID(sid))).Bytes(); err == nil {
-		_ = json.Unmarshal(raw, &s)
-	}
-
 	pipe := r.rdb.Pipeline()
 	pipe.Del(ctx, r.hashKey(tokenHash))
 	pipe.Del(ctx, r.fmtKey(d.SessionID(sid)))
-	if s.UserID != 0 {
-		pipe.SRem(ctx, r.userIndexKey(s.UserID), int64(sid))
-	}
 
 	_, err = pipe.Exec(ctx)
 	if err != nil {

@@ -25,7 +25,7 @@ func New(cfg Config) *App {
 	return &App{cfg: cfg}
 }
 
-func (a *App) Run() error {
+func (a *App) Run(ctx context.Context) error {
 	db, err := postgres.Open(context.Background(), a.cfg.DatabaseURL)
 	if err != nil {
 		return err
@@ -66,7 +66,8 @@ func (a *App) Run() error {
 		a.cfg.JWTAccessTTL,
 	)
 
-	return runtime.ServeGRPC(
+	return runtime.ServeGRPCWithContext(
+		ctx,
 		a.cfg.GRPCAddr,
 		func(server *grpc.Server) {
 			authpb.RegisterAuthServiceServer(server, handler)
